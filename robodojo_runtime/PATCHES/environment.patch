@@ -1,0 +1,419 @@
+diff --git a/env/planner_manager/curobo_planner.py b/env/planner_manager/curobo_planner.py
+index 311c075..7df23f6 100644
+--- a/env/planner_manager/curobo_planner.py
++++ b/env/planner_manager/curobo_planner.py
+@@ -115,6 +115,32 @@ class CuroboPlanner:
+         except Exception:
+             pass
+ 
++    def set_world_obstacles(self, cuboids):
++        """Add obstacle cuboids to the planner's collision world and rebuild
++        the motion planners (additive; the existing table is kept).
++
++        Args:
++            cuboids: iterable of {"name": str, "dims": [dx,dy,dz],
++                "pose": [x,y,z,qw,qx,qy,qz]} in the planner world (env) frame.
++        """
++        scene_model = deepcopy(self.scene_model)
++        cuboid_dict = dict(scene_model.get("cuboid", {}))
++        for item in cuboids:
++            cuboid_dict[str(item["name"])] = {
++                "dims": [float(v) for v in item["dims"]],
++                "pose": [float(v) for v in item["pose"]],
++            }
++        scene_model["cuboid"] = cuboid_dict
++        self.scene_model = scene_model
++
++        self.motion_planner = MotionPlanner(self._build_motion_planner_cfg(1))
++        self.motion_planner.warmup(enable_graph=self.use_graph_planner, num_warmup_iterations=5)
++        self.motion_planner_batch = BatchMotionPlanner(self._build_motion_planner_cfg(self._batch_max_size))
++        self.motion_planner_batch.warmup(enable_graph=self.use_graph_planner, num_warmup_iterations=5)
++        self._build_batch_pad_templates()
++        if self.use_cuda_graph:
++            self._prewarm_alternate_modes()
++
+     def _build_cspace_joint_values(self, active_joint_values):
+         active_joint_values = self._extract_active_joint_values(active_joint_values)
+         full_joint_values = self.cspace_retract_config.copy()
+@@ -340,6 +366,7 @@ class CuroboPlanner:
+         target_ee_pose,
+         real_robot_pose,
+         num_seeds: int = 32,
++        return_seeds: int = 1,
+     ):
+         target_pose = deepcopy(target_ee_pose)
+         target_pose = calculate_target_pose(real_robot_pose, self.robot_origin_pose, target_pose)
+@@ -359,7 +386,7 @@ class CuroboPlanner:
+         ik_result = self.ik_solver.solve_pose(
+             goal_tool_poses=goal_tool_poses,
+             current_state=current_state,
+-            return_seeds=1,
++            return_seeds=return_seeds,
+         )
+ 
+         if ik_result.success is None or not self._is_success(ik_result.success):
+@@ -374,37 +401,51 @@ class CuroboPlanner:
+         # nor cspace order.  Always do a name-based lookup against
+         # ``js_solution.joint_names`` when it's attached.  Fall back to the
+         # by-length heuristic only if the names are missing.
+-        joint_solution = np.asarray(ik_result.js_solution.position.detach().cpu())
+-        while joint_solution.ndim > 1:
+-            joint_solution = joint_solution[0]
+-        dof = joint_solution.shape[0]
+-        n_active = len(self.active_joints_name)
+-        n_cspace = len(self.cspace_joint_names)
+-        js_names = list(getattr(ik_result.js_solution, "joint_names", None) or [])
+-
+-        if len(js_names) == dof:
+-            try:
+-                indices = [js_names.index(n) for n in self.active_joints_name]
+-            except ValueError as exc:
++        sol_raw = np.asarray(ik_result.js_solution.position.detach().cpu())
++        # possible shapes: (dof,), (N, dof), (batch, N, dof), (batch, dof)
++        while sol_raw.ndim > 2:
++            sol_raw = sol_raw[0]
++        if sol_raw.ndim == 2 and sol_raw.shape[0] > 1:
++            sols = [sol_raw[i] for i in range(min(return_seeds, sol_raw.shape[0]))]
++        else:
++            sols = [sol_raw.reshape(-1)]
++
++        def _remap(sol):
++            dof = sol.shape[0]
++            n_active = len(self.active_joints_name)
++            n_cspace = len(self.cspace_joint_names)
++            js_names = list(getattr(ik_result.js_solution, "joint_names", None) or [])
++            if len(js_names) == dof:
++                try:
++                    indices = [js_names.index(n) for n in self.active_joints_name]
++                except ValueError as exc:
++                    raise ValueError(
++                        f"IK solution joint_names {js_names} do not contain all "
++                        f"active joints {self.active_joints_name}: {exc}"
++                    ) from None
++                return sol[indices]
++            if dof == n_cspace:
++                return sol[self._active_to_cspace_idx]
++            if dof != n_active:
+                 raise ValueError(
+-                    f"IK solution joint_names {js_names} do not contain all "
+-                    f"active joints {self.active_joints_name}: {exc}"
+-                ) from None
+-            joint_solution = joint_solution[indices]
+-        elif dof == n_cspace:
+-            joint_solution = joint_solution[self._active_to_cspace_idx]
+-        elif dof != n_active:
+-            raise ValueError(
+-                "Unexpected IK solution dimension from curobo: "
+-                f"got {dof}, expected either {n_active} active joints or "
+-                f"{n_cspace} cspace joints (and no usable joint_names "
+-                f"on js_solution)."
+-            )
++                    "Unexpected IK solution dimension from curobo: "
++                    f"got {dof}, expected either {n_active} active joints or "
++                    f"{n_cspace} cspace joints (and no usable joint_names "
++                    f"on js_solution)."
++                )
++            return sol
+ 
++        solutions = [_remap(s) for s in sols]
++        if return_seeds <= 1:
++            return {
++                "status": "Success",
++                "joint_names": self.active_joints_name,
++                "joint_value": solutions[0],
++            }
+         return {
+             "status": "Success",
+             "joint_names": self.active_joints_name,
+-            "joint_value": joint_solution,
++            "joint_solutions": solutions,
+         }
+ 
+     def _trans_from_world_to_base(self, base_pose, target_pose):
+diff --git a/env/robot_manager/robot_manager.py b/env/robot_manager/robot_manager.py
+index 11b552c..74de3df 100644
+--- a/env/robot_manager/robot_manager.py
++++ b/env/robot_manager/robot_manager.py
+@@ -328,6 +328,7 @@ class RobotManager:
+         env_idx: int,
+         robot,
+         trans: Literal["relative", "world"] = "world",
++        **kwargs,
+     ):
+         now_qpos = self.get_joint(robot, env_idx_list=[env_idx])[env_idx]
+         trans_target_pose = deepcopy(target_pose)
+@@ -335,7 +336,9 @@ class RobotManager:
+             trans_target_pose = self._trans_from_endlink_to_gripper(target_pose, robot)
+         planner = self.ik_solver[robot.robot_name]
+         robot_pose = deepcopy(robot.entity_origin_pose)
+-        return planner.solve_ik_to_joint(now_qpos, trans_target_pose, real_robot_pose=robot_pose)
++        return planner.solve_ik_to_joint(
++            now_qpos, trans_target_pose, real_robot_pose=robot_pose, **kwargs
++        )
+ 
+     def process_name(self, name):
+         if name.endswith("_state"):
+diff --git a/env/scene_manager/scene_manager.py b/env/scene_manager/scene_manager.py
+index 91ac927..470619e 100644
+--- a/env/scene_manager/scene_manager.py
++++ b/env/scene_manager/scene_manager.py
+@@ -217,7 +217,7 @@ class SceneManager:
+                 for obj in obj_dict.values():
+                     obj.apply_saved_pose()
+ 
+-        for _ in range(20):
++        for _ in range(int(__import__('os').environ.get('ROBODOJO_PLACEMENT_SETTLE_STEPS', '20'))):
+             self.sim.sim_step(render=False)
+ 
+     def reload_env_scene(self, env_id: int, object_types: List[str] = None):
+diff --git a/env/seed_manager/seed_manager.py b/env/seed_manager/seed_manager.py
+index 3c8c74f..293f908 100644
+--- a/env/seed_manager/seed_manager.py
++++ b/env/seed_manager/seed_manager.py
+@@ -63,10 +63,16 @@ class SeedManager:
+         """Return a list of seeds for the next `reset()` call.
+ 
+         Returns None when enough episodes have been successfully collected.
++        With ``ROBODOJO_LOOP_SEEDS=1`` the queue wraps around instead of
++        returning None, so the same (e.g. 30) random layouts are cycled until
++        the eval client's ``eval_num`` target is met.
+         """
+ 
+         if self.idx >= self.ed_idx:
+-            return None
++            if os.environ.get("ROBODOJO_LOOP_SEEDS") == "1":
++                self.idx = 0
++            else:
++                return None
+         if max_count is not None:
+             batch_size = min(self.num_envs, max(0, int(max_count)))
+             if batch_size == 0:
+diff --git a/scripts/eval_policy.sh b/scripts/eval_policy.sh
+index b86c88e..f2f478f 100755
+--- a/scripts/eval_policy.sh
++++ b/scripts/eval_policy.sh
+@@ -4,6 +4,12 @@ set -euo pipefail
+ # Ensure project root is on PYTHONPATH so first-party imports like `env`, `task`, and `utils` work.
+ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/XPolicyLab:${PYTHONPATH:-}"
++# Prefer the runtime miniforge python (locked PyYAML wheel) for yaml parsing.
++YAML_PYTHON="python3"
++if [[ -n "${ROBODOJO_CONDA_ROOT:-}" && -x "${ROBODOJO_CONDA_ROOT}/bin/python" ]] && \
++   "${ROBODOJO_CONDA_ROOT}/bin/python" -c "import yaml" >/dev/null 2>&1; then
++  YAML_PYTHON="${ROBODOJO_CONDA_ROOT}/bin/python"
++fi
+ echo "[INFO] PYTHONPATH=${PYTHONPATH}"
+ 
+ # Usage:
+@@ -75,7 +81,7 @@ if [[ ! -f "$cfg_file" ]]; then
+ fi
+ 
+ # Resolve sim config file from cfg_file: env_cfg/<name>.yml -> config.sim
+-sim_cfg_name="$(python3 -c "import sys,yaml;print(yaml.safe_load(open(sys.argv[1]))['config']['sim'])" "$cfg_file")"
++sim_cfg_name="$(${YAML_PYTHON} -c "import sys,yaml;print(yaml.safe_load(open(sys.argv[1]))['config']['sim'])" "$cfg_file")"
+ sim_cfg_file="./env_cfg/sim/${sim_cfg_name}.yml"
+ if [[ ! -f "$sim_cfg_file" ]]; then
+   echo "[ERROR] Sim config file not found: $sim_cfg_file" >&2
+@@ -85,7 +91,7 @@ fi
+ if [[ -z "${protocol}" ]]; then
+   policy_deploy_file="./XPolicyLab/policy/${policy_name}/deploy.yml"
+   if [[ -f "$policy_deploy_file" ]]; then
+-    protocol="$(python3 -c "import sys,yaml;print((yaml.safe_load(open(sys.argv[1])) or {}).get('protocol','ws'))" "$policy_deploy_file")"
++    protocol="$(${YAML_PYTHON} -c "import sys,yaml;print((yaml.safe_load(open(sys.argv[1])) or {}).get('protocol','ws'))" "$policy_deploy_file")"
+   else
+     protocol="ws"
+   fi
+@@ -112,8 +118,8 @@ if [[ -n "${eval_batch}" ]]; then
+ fi
+ 
+ # Read render_interval / env.num_envs from yaml (fallback if missing)
+-render_interval="$(python3 -c "import sys,yaml;print(yaml.safe_load(open(sys.argv[1])).get('render_interval',1))" "$sim_cfg_file")"
+-num_envs="$(python3 -c "import sys,yaml;print(yaml.safe_load(open(sys.argv[1])).get('scene',{}).get('num_envs',1))" "$sim_cfg_file")"
++render_interval="$(${YAML_PYTHON} -c "import sys,yaml;print(yaml.safe_load(open(sys.argv[1])).get('render_interval',1))" "$sim_cfg_file")"
++num_envs="$(${YAML_PYTHON} -c "import sys,yaml;print(yaml.safe_load(open(sys.argv[1])).get('scene',{}).get('num_envs',1))" "$sim_cfg_file")"
+ 
+ echo "[INFO] render_interval = ${render_interval}"
+ echo "[INFO] num_envs        = ${num_envs}"
+diff --git a/src/eval_client/eval_env.py b/src/eval_client/eval_env.py
+index 182e91d..f777a2a 100644
+--- a/src/eval_client/eval_env.py
++++ b/src/eval_client/eval_env.py
+@@ -17,6 +17,7 @@ from env.seed_manager.seed_manager import SeedManager
+ from utils.cluttered_generator import UnStableError
+ from utils.pipeline_utils import get_robot_action_dim_info
+ from utils.save_file import VideoStreamWriter, format_video_saved_message, save_json
++from src.eval_client.traj_recorder import TrajRecorder
+ 
+ 
+ def _patch_websockets_proxy_compat():
+@@ -61,6 +62,7 @@ def create_eval_env(config, app, resume_state=None, **kwargs):
+             self.additional_info = self.eval_cfg.get("additional_info", "")
+             self.eval_seed = self.eval_cfg.get("seed", 0)
+             self.physx_monitor_enabled = bool(self.eval_cfg.get("physx_monitor_enabled", False))
++            self.traj_recorder = TrajRecorder(active=os.environ.get("ROBODOJO_SAVE_TRAJ") == "1")
+             if self.physx_monitor_enabled:
+                 from src.eval_client.physx_warning_monitor import (
+                     PhysXBrokenError,
+@@ -173,6 +175,16 @@ def create_eval_env(config, app, resume_state=None, **kwargs):
+                 completed_layout_ids=completed_layout_ids,
+                 abandoned_layout_ids=abandoned_layout_ids,
+             )
++            # Data-collection mode: restrict the eval queue to an explicit
++            # layout whitelist (comma-separated layout ids).  Used to rollout
++            # a specific set of std layouts for the Pi_05 + smoothing pipeline.
++            layout_ids_env = os.environ.get("ROBODOJO_LAYOUT_IDS", "")
++            if layout_ids_env:
++                whitelist = [int(x) for x in layout_ids_env.split(",") if x.strip()]
++                self.seed_manager.seed_list = whitelist
++                self.seed_manager.ed_idx = len(whitelist)
++                self.seed_manager.idx = 0
++                print(f"[EvalEnv] layout whitelist: {whitelist}", flush=True)
+ 
+             self.deploy_cfg = config.deploy_cfg
+             self.port = self.deploy_cfg.get("port", None)
+@@ -206,6 +218,39 @@ def create_eval_env(config, app, resume_state=None, **kwargs):
+             self.obs_manager.initialize(self)
+ 
+         def reset(self, seed=None, options=None):
++            self.traj_recorder.reset_all()
++            if os.environ.get("ROBODOJO_RANDOM") == "1":
++                # Random-layout rollout.  put_bottles has no official _random
++                # layout set; a std layout JSON only stores the placement
++                # CONFIG (xlim/ylim/rotate), and the actual object positions
++                # are sampled by ClutteredGenerator from the ENV SEED.  So a
++                # random env seed + a std template = a fresh random layout.
++                # (saved_layouts=None would leave the scene EMPTY -- the naive
++                # random_mode in collect_env had that bug.)
++                import random as _random
++
++                template = self.seed_manager.get_seed_scene_info(
++                    _random.randrange(len(self.seed_manager.seed_info))
++                )
++                fresh = [_random.randrange(0, 1_000_000_000) for _ in range(self.num_envs)]
++                self.env_seeds = fresh
++                self.success = [True] * self.num_envs
++                self.end_flag = [False] * self.num_envs
++                self.take_action_cnt = [0] * self.num_envs
++                self._abort_video_writers()
++                self.episode_nums = self.num_envs
++                self.unstable_envs = set()
++                self.current_env_seed_map = {i: s for i, s in enumerate(fresh)}
++                for idx in range(self.num_envs):
++                    self.scene_manager.layout_manager.set_saved_layout(idx, template)
++                super().reset(seed=self.env_seeds, options=options)
++                self.obs_manager.reset()
++                self.setup_scene()
++                self.robot_manager.set_origin_endpose()
++                self.robot_manager.set_robot_init_state()
++                self.reward_manager.init_state()
++                self.model_client.call(func_name="reset")
++                return
+             seed = list(seed)
+             if len(seed) < self.num_envs:
+                 seed = seed + [None] * (self.num_envs - len(seed))
+@@ -255,7 +300,11 @@ def create_eval_env(config, app, resume_state=None, **kwargs):
+                 raise UnStableError("All scene Unstable Error!")
+             for _ in range(10):
+                 self.render()
+-            for idx in range(200):
++            # Keep the official 200-step settling period by default.  A short
++            # override is useful for bounded installation/smoke checks where
++            # scene construction, not task quality, is the target.
++            setup_steps = int(os.environ.get("ROBODOJO_SETUP_STEPS", "200"))
++            for idx in range(setup_steps):
+                 self.sim_step()
+                 if idx % 5 == 0:
+                     self.render()
+@@ -281,6 +330,8 @@ def create_eval_env(config, app, resume_state=None, **kwargs):
+                     self._stream_vision(env_idx, data[env_idx])
+                 env_data = deepcopy(data[env_idx])
+                 env_data["env_idx"] = env_idx
++                if env_idx in getattr(self, "current_env_seed_map", {}):
++                    self.traj_recorder.record_obs(env_idx, env_data)
+                 data_list.append(env_data)
+             return data_list
+ 
+@@ -369,6 +420,7 @@ def create_eval_env(config, app, resume_state=None, **kwargs):
+                     continue
+ 
+                 self.take_action_cnt[env_idx] += 1
++                self.traj_recorder.record_action(env_idx, action)
+                 print(
+                     f"env{env_idx} step: \033[92m{self.take_action_cnt[env_idx]} / {self.step_lim}\033[0m",
+                     end="\r",
+@@ -817,6 +869,7 @@ def create_eval_env(config, app, resume_state=None, **kwargs):
+                 }
+                 video_path = os.path.join(self.save_dir, f"episode_{index:07d}.mp4")
+                 self.save_video(env_idx, video_path, tag)
++                self.traj_recorder.write(env_idx, self.save_dir, index)
+ 
+             # Drop streams for envs not saved this batch (e.g. unstable ones).
+             self._abort_video_writers()
+diff --git a/src/eval_client/main.py b/src/eval_client/main.py
+index 199b75b..78408be 100644
+--- a/src/eval_client/main.py
++++ b/src/eval_client/main.py
+@@ -325,8 +325,11 @@ def main():
+     if os.environ.get("EVAL_NUM"):
+         _env_eval_num = os.environ.get("EVAL_NUM")
+         if str(_env_eval_num).lower() != "native":
+-            eval_num = min(int(_env_eval_num), int(eval_num))
++            # 正式版协议（2026-08-11）：显式 EVAL_NUM 直接生效，不受 _task.yml 原生
++            # eval_nums（Gen 任务为 25）封顶。布局不足时 SeedManager 会自然截断。
++            eval_num = int(_env_eval_num)
+     eval_cfg["eval_num"] = eval_num
++    random_mode = os.environ.get("ROBODOJO_RANDOM") == "1"
+ 
+     OmegaConf.update(
+         env_cfg,
+@@ -340,7 +343,11 @@ def main():
+     resume_state = _load_resume_manifest(eval_cfg, run_id)
+     env = create_eval_env(env_cfg, simulation_app, resume_state=resume_state)
+     eval_time = env.success_nums + env.fail_nums
+-    if eval_time >= eval_num:
++    if random_mode:
++        # random layouts: the eval env samples a fresh random scene per reset;
++        # the seed list here is just a placeholder to drive eval_num episodes
++        env.env_seeds = [0] * env.num_envs
++    elif eval_time >= eval_num:
+         # Already complete on resume - nothing left to do.
+         env.env_seeds = None
+     else:
+@@ -431,10 +438,13 @@ def main():
+         if eval_time >= eval_num:
+             break
+ 
+-        env.env_seeds = env.seed_manager.get_seeds(max_count=eval_num - eval_time)
+-        if env.env_seeds is None:
+-            print("No more seeds to run, exiting.")
+-            break
++        if random_mode:
++            env.env_seeds = [0] * env.num_envs
++        else:
++            env.env_seeds = env.seed_manager.get_seeds(max_count=eval_num - eval_time)
++            if env.env_seeds is None:
++                print("No more seeds to run, exiting.")
++                break
+ 
+         env.close()
+ 
+diff --git a/task/RoboDojo/tasks/stack_bowls.py b/task/RoboDojo/tasks/stack_bowls.py
+index 7f4a7e6..4dde6ab 100644
+--- a/task/RoboDojo/tasks/stack_bowls.py
++++ b/task/RoboDojo/tasks/stack_bowls.py
+@@ -1,3 +1,5 @@
++import os
++
+ from env.environment.task_env import TaskEnv
+ from env.reward_manager.reward_manager import RewardManager
+ 
+@@ -6,7 +8,8 @@ class StackBowlsCommon:
+     def __init__(self, config, app, **kwargs):
+         super().__init__(config, app, **kwargs)
+         self.reward_manager = RewardManager(self.num_envs)
+-        self.step_lim = 800
++        # Temporary bounded smoke override; unset keeps the official limit.
++        self.step_lim = int(os.environ.get("ROBODOJO_STEP_LIM", "800"))
+ 
+     def _post_setup_scene(self, sim):
+         super()._post_setup_scene(sim)

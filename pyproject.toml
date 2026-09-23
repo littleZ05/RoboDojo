@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlinf-robodojo-runtime"
+version = "0.2.0"
+description = "RoboDojo environment runtime for RLinf and RPent"
+readme = "PYPI.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11,<3.12"
+authors = [{name = "RLinf Contributors"}]
+maintainers = [{name = "RLinf Team"}]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+]
+# The simulator stack. These pins used to live in RPent's `robodojo-sim` extra,
+# where they collided with the agent stack; they belong to the simulator, so
+# they ride with it here and the integrator only names this distribution.
+#
+# Isaac Sim 5.1 ships the Kit binaries *and* the extension caches
+# (`[all,extscache]`), which is several gigabytes of wheels; RoboDojo's
+# IsaacLab fork `afca7b09` changes headless camera handling and Kit experience
+# selection, so it is not interchangeable with the official repository. The
+# Torch family stays pinned because Isaac Sim's version and cuRobo's
+# build/runtime ABI are coupled.
+dependencies = [
+    "isaacsim[all,extscache]==5.1.0",
+    "isaaclab @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab",
+    "isaaclab_assets @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab_assets",
+    "isaaclab_tasks @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab_tasks",
+    "torch==2.7.0",
+    "torchvision==0.22.0",
+    "torchaudio==2.7.0",
+    # cuRobo is a direct-URL source dependency, so it cannot live on a public
+    # index. Like RoboTwin's runtime, the integrator's extra keeps the cuRobo
+    # reference and supplies the build-time Torch override through
+    # `[tool.uv.extra-build-dependencies]`; this entry documents the validated
+    # revision and is honoured for non-index installs (`uv pip install <path>`).
+    "nvidia-curobo[cu12] @ git+https://github.com/yuechen0614/curobo.git@main",
+    # cuRobo runtime minimums from the validated deployment.
+    "tyro>=0.9.0",
+    "websockets>=12.0",
+    # Runtime minimums RoboDojo applies on top of Isaac Sim
+    # (`pin_runtime_deps` in its `scripts/install.sh`).
+    "numpy>=1.26.0",
+    "filelock>=3.13.1",
+    "warp-lang>=1.11.0",
+    "onnx>=1.18,<1.22",
+    "ipython<9",
+    # RoboDojo's own imports on the environment-server path.
+    "opencv-python-headless>=4.11.0.86",
+    "scipy>=1.15.3",
+    "transforms3d",
+    # `RoboDojo/env/scene_manager/layout_manager.py` imports these at module
+    # level and the scene manager pulls that file in while the environment
+    # server boots.
+    "shapely",
+    "omegaconf",
+    # `isaaclab.utils.datasets` and `isaaclab_tasks/direct/automate/` import
+    # h5py directly.
+    "h5py",
+]
+
+[project.urls]
+Homepage = "https://github.com/RoboDojo-Benchmark/RoboDojo"
+Upstream = "https://github.com/RoboDojo-Benchmark/RoboDojo"
+RLinf = "https://github.com/RLinf/RLinf"
+RPent = "https://github.com/RLinf/RPent"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+# `namespaces = false` keeps the vendored tree out of package discovery: it is
+# data that lands on `PYTHONPATH`, not a set of subpackages of this one.
+namespaces = false
+include = ["robodojo_runtime*"]
+exclude = ["robodojo_runtime._source*"]
+
+[tool.setuptools.package-data]
+robodojo_runtime = ["_source/**/*", "SOURCE_LOCK.txt", "PATCHES/*.patch"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

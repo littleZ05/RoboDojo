@@ -1,0 +1,21 @@
+isaacsim[all,extscache]==5.1.0
+isaaclab @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab
+isaaclab_assets @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab_assets
+isaaclab_tasks @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab_tasks
+torch==2.7.0
+torchvision==0.22.0
+torchaudio==2.7.0
+nvidia-curobo[cu12] @ git+https://github.com/yuechen0614/curobo.git@main
+tyro>=0.9.0
+websockets>=12.0
+numpy>=1.26.0
+filelock>=3.13.1
+warp-lang>=1.11.0
+onnx<1.22,>=1.18
+ipython<9
+opencv-python-headless>=4.11.0.86
+scipy>=1.15.3
+transforms3d
+shapely
+omegaconf
+h5py

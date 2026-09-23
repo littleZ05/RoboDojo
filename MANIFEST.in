@@ -1,0 +1,6 @@
+include LICENSE
+include README.md
+include PYPI.md
+include SOURCE_LOCK.txt
+recursive-include robodojo_runtime/_source *
+global-exclude __pycache__ *.py[cod]
