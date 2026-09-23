@@ -1,10 +1,16 @@
-rlinf-robodojo-runtime 0.2.0
+rlinf-robodojo-runtime 0.3.0
 ============================
 
 Upstream:      https://github.com/RoboDojo-Benchmark/RoboDojo
 Commit:        36bfcb7c580b149c6e39ed2eb77d60689152e570
 Commit date:   2026-08-07 11:11:43 +0800
 Vendored paths: env/ src/ task/ utils/ env_cfg/ scripts/
+
+Runtime adapter: robodojo_runtime/bridge.py (not vendored).
+Version 0.3.0 adds the lazy RLinf/RPent simulation bridge and CPU contract
+tests. The vendored paths and environment.patch are unchanged from 0.2.0.
+assets_root() now returns the containing directory, matching the documented
+ROBODOJO_ASSETS_ROOT contract also when the environment variable is unset.
 
 The vendored tree is the tree this integration was validated against, not a
 pristine upstream copy. Upstream's public release is eval-only: it ships

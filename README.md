@@ -84,3 +84,37 @@ recorded in `SOURCE_LOCK.txt`.
 ## Licence
 
 MIT, inherited from RoboDojo. See `LICENSE`.
+
+## Simulator bridge (0.3.0)
+
+`robodojo_runtime.bridge.VectorEnv(task_config, n_envs, env_seeds)` provides
+`reset(env_idx=None, env_seeds=...)`, `get_obs()`, `step(actions)`,
+`check_seeds(seeds)`, and `close(clear_cache=True)`. Importing the bridge
+does not import Isaac Sim; construction starts AppLauncher before loading the
+vendored environment. The bridge reuses the collection client and the native
+observation, robot, scene and reward managers.
+
+Set `task_config.task_name` and optionally `env_cfg_type` (default
+`arx_x5`), `source_root`, `save_dir`, `cuda_device`, `headless`,
+`max_episode_steps`, and `random`. Official reset seeds are layout IDs;
+random reset selects a saved template and generates a fresh scene seed,
+matching the RPent random-layout path. Random mode requires saved templates.
+
+Actions have shape `(N,H,A)`, or four joint-key arrays shaped
+`(N,H,width)`. The key/state order is left arm, right arm, left gripper,
+right gripper; `action_dims` defaults to `[6,6,1,1]`.
+Observations include `full_image`, optional wrist images, flat `state`,
+`instruction`, and native `vision` including intrinsic/extrinsic metadata.
+Step returns observations, chunk-total rewards, latched termination/truncation
+arrays of shape `(N,)`, and per-slot info dictionaries. It never auto-resets.
+
+One slot runs on the caller's main thread. Multiple slots use spawned processes,
+one Isaac application per slot, because native reset and physics affect the
+whole scene. Protect application entry points with `if __name__ == "__main__"`.
+Partial resets use a full, globally indexed seed list and leave other slots
+untouched. Multi-slot operation has CPU contract coverage only; GPU throughput,
+resource use, rollout behavior and task success remain unverified.
+
+The bridge is outside `_source/`; the validated vendored tree is unchanged.
+`assets_root()` defaults to the code root, or `ROBODOJO_ASSETS_ROOT` when
+set, and always names the directory **containing** `Assets/`.

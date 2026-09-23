@@ -11,6 +11,7 @@ rlinf_robodojo_runtime.egg-info/requires.txt
 rlinf_robodojo_runtime.egg-info/top_level.txt
 robodojo_runtime/SOURCE_LOCK.txt
 robodojo_runtime/__init__.py
+robodojo_runtime/bridge.py
 robodojo_runtime/PATCHES/environment.patch
 robodojo_runtime/_source/env/global_configs.py
 robodojo_runtime/_source/env/seeding.py
@@ -205,3 +206,5 @@ robodojo_runtime/_source/utils/save_file.py
 robodojo_runtime/_source/utils/transformer.py
 robodojo_runtime/_source/utils/update_embodiment_config_path.py
 robodojo_runtime/_source/utils/usd_schema.py
+tests/test_bridge.py
+tests/test_cleanup.py

@@ -19,7 +19,7 @@ top-level directories (``env``, ``task``, ``utils``) rely on being on
 ``PYTHONPATH``, and the package runs inside Isaac Sim. This distribution makes
 that tree installable without changing how RoboDojo imports itself:
 
-* :data:`VENDORED_SOURCE_ROOT` holds a verbatim copy of the upstream tree and
+* :data:`VENDORED_SOURCE_ROOT` holds the validated, patched RoboDojo tree and
   :func:`source_root` returns it, so callers can put it on ``PYTHONPATH`` and
   ``import env.global_configs`` exactly as they would from a checkout.
 * the simulator dependency pins ride along in this distribution instead of in
@@ -29,7 +29,7 @@ Scene data (``Assets/``) and policy checkpoints are *not* shipped: they are
 downloaded separately. :func:`assets_root` reports where the patched
 ``env.global_configs`` looks for them.
 
-The vendored tree carries one local patch, recorded in ``SOURCE_LOCK.txt``:
+The vendored changes are recorded in ``SOURCE_LOCK.txt``.
 ``env/global_configs.py`` accepts ``ROBODOJO_ROOT`` for the code root and
 ``ROBODOJO_ASSETS_ROOT`` for the scene-data root. Unset, both keep upstream's
 ``<repo>/Assets`` behaviour, so a checkout and this distribution behave
@@ -49,7 +49,7 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -81,7 +81,7 @@ def assets_root() -> Path:
     override = os.environ.get("ROBODOJO_ASSETS_ROOT")
     if override:
         return Path(override).expanduser().resolve()
-    return source_root() / "Assets"
+    return source_root()
 
 
 def env_config_path() -> Path:
