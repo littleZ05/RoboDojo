@@ -1,4 +1,4 @@
-rlinf-robodojo-runtime 0.3.0
+rlinf-robodojo-runtime 0.3.1
 ============================
 
 Upstream:      https://github.com/RoboDojo-Benchmark/RoboDojo

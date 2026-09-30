@@ -64,7 +64,11 @@ The `rpent` branch is a standalone branch holding this distribution; upstream
 RoboDojo's own repository is untouched. RoboTwin's runtime is published the
 same way from `RLinf/RoboTwin@rpent`.
 
-## Simulator bridge (0.3.0)
+## Simulator bridge (0.3.1)
+Version 0.3.1 aligns the OpenCV variant: the simulator stack asks for
+opencv-python instead of opencv-python-headless, because the agent stack
+requires that distribution and both wheels write the same cv2/ files.
+
 
 `robodojo_runtime.bridge.VectorEnv(task_config, n_envs, env_seeds)` provides
 `reset(env_idx=None, env_seeds=...)`, `get_obs()`, `step(actions)`,

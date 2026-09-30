@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlinf-robodojo-runtime"
-version = "0.3.0"
+version = "0.3.1"
 description = "RoboDojo environment runtime for RLinf and RPent"
 readme = "PYPI.md"
 license = {file = "LICENSE"}
@@ -53,7 +53,11 @@ dependencies = [
     "onnx>=1.18,<1.22",
     "ipython<9",
     # RoboDojo's own imports on the environment-server path.
-    "opencv-python-headless>=4.11.0.86",
+    # Non-headless on purpose: the agent stack (rpent-openpi) requires
+    # opencv-python, and the two wheels install the same cv2/ files, so
+    # declaring headless here makes an install of both silently overwrite
+    # one with the other. RoboTwin's runtime realigns the same way.
+    "opencv-python>=4.11.0.86,<5",
     "scipy>=1.15.3",
     "transforms3d",
     # `RoboDojo/env/scene_manager/layout_manager.py` imports these at module

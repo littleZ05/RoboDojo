@@ -85,7 +85,11 @@ recorded in `SOURCE_LOCK.txt`.
 
 MIT, inherited from RoboDojo. See `LICENSE`.
 
-## Simulator bridge (0.3.0)
+## Simulator bridge (0.3.1)
+Version 0.3.1 aligns the OpenCV variant: the simulator stack asks for
+opencv-python instead of opencv-python-headless, because the agent stack
+requires that distribution and both wheels write the same cv2/ files.
+
 
 `robodojo_runtime.bridge.VectorEnv(task_config, n_envs, env_seeds)` provides
 `reset(env_idx=None, env_seeds=...)`, `get_obs()`, `step(actions)`,
