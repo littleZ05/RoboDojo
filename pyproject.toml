@@ -24,15 +24,18 @@ classifiers = [
 #
 # Isaac Sim 5.1 ships the Kit binaries *and* the extension caches
 # (`[all,extscache]`), which is several gigabytes of wheels; RoboDojo's
-# IsaacLab fork `afca7b09` changes headless camera handling and Kit experience
+# IsaacLab fork changes headless camera handling and Kit experience, so the
+# three isaaclab distributions and cuRobo are pinned to the exact revisions
+# RLinf's requirements/install.sh uses (`afca7b09` and `895c651`); bump all
+# four together after revalidating
 # selection, so it is not interchangeable with the official repository. The
 # Torch family stays pinned because Isaac Sim's version and cuRobo's
 # build/runtime ABI are coupled.
 dependencies = [
     "isaacsim[all,extscache]==5.1.0",
-    "isaaclab @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab",
-    "isaaclab_assets @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab_assets",
-    "isaaclab_tasks @ git+https://github.com/yuechen0614/IsaacLab.git@main#subdirectory=source/isaaclab_tasks",
+    "isaaclab @ git+https://github.com/yuechen0614/IsaacLab.git@afca7b09d60d8beb9c1cb28b43066499940b969b#subdirectory=source/isaaclab",
+    "isaaclab_assets @ git+https://github.com/yuechen0614/IsaacLab.git@afca7b09d60d8beb9c1cb28b43066499940b969b#subdirectory=source/isaaclab_assets",
+    "isaaclab_tasks @ git+https://github.com/yuechen0614/IsaacLab.git@afca7b09d60d8beb9c1cb28b43066499940b969b#subdirectory=source/isaaclab_tasks",
     "torch==2.7.0",
     "torchvision==0.22.0",
     "torchaudio==2.7.0",
@@ -41,7 +44,7 @@ dependencies = [
     # reference and supplies the build-time Torch override through
     # `[tool.uv.extra-build-dependencies]`; this entry documents the validated
     # revision and is honoured for non-index installs (`uv pip install <path>`).
-    "nvidia-curobo[cu12] @ git+https://github.com/yuechen0614/curobo.git@main",
+    "nvidia-curobo[cu12] @ git+https://github.com/yuechen0614/curobo.git@895c6517243f8cb091c73c018c8167192d39599a",
     # cuRobo runtime minimums from the validated deployment.
     "tyro>=0.9.0",
     "websockets>=12.0",
